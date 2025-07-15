@@ -5,11 +5,11 @@
 
 import inspect
 import yaml
-from typing import Callable, Any, Optional, Type
+from typing import Callable, Any, Optional, Type, Dict
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, create_model
 import uvicorn
 
 class Toolset:
@@ -34,9 +34,10 @@ class Toolset:
             version=version,
             description="A server for dynamically added tools with auto-generated schemas."
         )
-        self._tools = {}
+        self.tools: Dict[str, Callable] = {}
+        self.input_models: Dict[str, Type] = {}
 
-    def add(self, name: Optional[str] = None) -> Callable:
+    def add(self, _tool_name: Optional[str] = None) -> Callable:
         """
         A decorator to add a function as a tool to the API.
 
@@ -57,43 +58,37 @@ class Toolset:
             TypeError: If the function signature is not valid (e.g., wrong
                        number of parameters or incorrect type hints).
         """
+
         def decorator(func: Callable) -> Callable:
-            tool_name = name or func.__name__
-            if tool_name in self._tools:
-                raise ValueError(f"Tool with name '{tool_name}' already exists.")
-
-            # --- 1. Validate the function signature ---
+            tool_name = _tool_name or func.__name__
             sig = inspect.signature(func)
-            params = list(sig.parameters.values())
-
-            if len(params) != 1:
-                raise TypeError(
-                    f"Tool function '{tool_name}' must have exactly one parameter. "
-                    f"Found {len(params)}."
-                )
-
-            input_param = params[0]
-            input_model: Type[Any] = input_param.annotation
-
-            if not inspect.isclass(input_model) or not issubclass(input_model, BaseModel):
-                raise TypeError(
-                    f"The parameter for tool '{tool_name}' must be type-hinted with a "
-                    f"Pydantic BaseModel subclass. Found: {input_model}"
-                )
+            fields = {}
+            for name, param in sig.parameters.items():
+                annot = param.annotation
+                if annot is inspect._empty:
+                    raise TypeError(
+                        f"All parameters for tool '{tool_name}' must be type-annotated. "
+                        f"Parameter '{name}' is not."
+                    )
+                default = param.default if param.default is not inspect._empty else ...
+                fields[name] = (annot, default)
+            model = create_model(f"{tool_name}Input", **fields)
+            self.input_models[tool_name] = model
+            self.tools[tool_name] = func
 
             # --- 2. Add the main tool endpoint (/tool/{tool_name}) ---
             return_model = sig.return_annotation
             if return_model is inspect.Signature.empty:
                 return_model = None  # Let FastAPI infer the response model
-
-            @self.app.post(f"/tool/{tool_name}", name=tool_name, response_model=return_model, tags=["Tools"])
-            async def endpoint(data: input_model): # type: ignore
+            print(f"adding /tool/{tool_name}")
+            @self.app.post(f"/tool/{tool_name}", name=tool_name, tags=["Tools"])
+            async def endpoint(data: model): # type: ignore
                 """Dynamically created endpoint for the tool."""
                 try:
                     if inspect.iscoroutinefunction(func):
-                        result = await func(data)
+                        result = await func(**data.model_dump())
                     else:
-                        result = func(data)
+                        result = func(**data.model_dump())
                     return result
                 except Exception as e:
                     # In a real application, you would add more robust logging here.
@@ -157,7 +152,7 @@ class Toolset:
 
                 return yaml.dump(tool_openapi_spec, sort_keys=False, indent=2)
 
-            self._tools[tool_name] = func
+            self.tools[tool_name] = func
             print(f"✅ Tool '{tool_name}' added successfully.")
             return func
         return decorator

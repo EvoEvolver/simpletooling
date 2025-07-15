@@ -40,9 +40,9 @@ if __name__ == "__main__":
     print("  GET  /docs (Swagger UI)")
     print()
     print("Try these curl commands:")
-    print('  curl -X POST "http://localhost:8000/hello" -H "Content-Type: application/json" -d \'{"name": "World"}\'')
-    print('  curl -X POST "http://localhost:8000/add" -H "Content-Type: application/json" -d \'{"a": 5, "b": 3}\'')
-    print('  curl -X POST "http://localhost:8000/multiply" -H "Content-Type: application/json" -d \'{"x": 4.5, "y": 2.0}\'')
+    print('  curl -X POST "http://localhost:8000/tool/hello" -H "Content-Type: application/json" -d \'{"name": "World"}\'')
+    print('  curl -X POST "http://localhost:8000/tool/add" -H "Content-Type: application/json" -d \'{"a": 5, "b": 3}\'')
+    print('  curl -X POST "http://localhost:8000/tool/multiply" -H "Content-Type: application/json" -d \'{"x": 4.5, "y": 2.0}\'')
     print()
     
     # Start the server
