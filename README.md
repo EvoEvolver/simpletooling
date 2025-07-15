@@ -13,7 +13,7 @@ A Python package that automatically converts well-typed functions into FastAPI e
 ## Installation
 
 ```bash
-pip install simpletooling
+pip install git+https://github.com/EvoEvolver/simpletooling.git
 ```
 
 Or install from source:
@@ -27,12 +27,11 @@ pip install -e .
 ## Quick Start
 
 ```python
-from simpletooling import ToolSet
+from simpletooling import Toolset
 from pydantic import BaseModel
-from typing import List
 
-# Create a ToolSet instance
-toolset = ToolSet()
+# Create a Toolset instance
+toolset = Toolset()
 
 # Define your data models
 class User(BaseModel):
@@ -48,7 +47,7 @@ class UserResponse(BaseModel):
     message: str
 
 # Create a well-typed function
-@toolset.add
+@toolset.add()
 def create_user(name: str, age: int, email: str) -> UserResponse:
     """Create a new user."""
     return UserResponse(
@@ -75,7 +74,7 @@ if __name__ == "__main__":
 ### Basic Function Decorator
 
 ```python
-@toolset.add
+@toolset.add()
 def my_function(param1: str, param2: int) -> str:
     return f"Result: {param1} and {param2}"
 ```
@@ -101,7 +100,7 @@ class OutputModel(BaseModel):
     result: str
     processed: bool
 
-@toolset.add
+@toolset.add()
 def process_data(data: InputModel) -> OutputModel:
     return OutputModel(
         result=f"Processed {data.name}",
@@ -130,7 +129,7 @@ The package will raise errors if:
 Example error:
 ```python
 # This will raise an error
-@toolset.add
+@toolset.add()
 def bad_function(param):  # Missing type annotation
     return "result"
 
@@ -146,7 +145,7 @@ def another_bad_function(param: str):  # Missing return type
 ```python
 import asyncio
 
-@toolset.add
+@toolset.add()
 async def async_function(data: str) -> str:
     await asyncio.sleep(1)
     return f"Async result: {data}"
@@ -157,7 +156,7 @@ async def async_function(data: str) -> str:
 ```python
 from typing import Optional
 
-@toolset.add
+@toolset.add()
 def function_with_optional(param1: str, param2: Optional[int] = None) -> str:
     return f"Result: {param1}, {param2}"
 ```
@@ -167,7 +166,7 @@ def function_with_optional(param1: str, param2: Optional[int] = None) -> str:
 ```python
 from typing import List, Dict
 
-@toolset.add
+@toolset.add()
 def process_list(items: List[str]) -> Dict[str, int]:
     return {item: len(item) for item in items}
 ```

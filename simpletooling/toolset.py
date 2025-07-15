@@ -1,227 +1,249 @@
-import inspect
-from functools import wraps
-from typing import Any, Callable, Dict, Optional
+# main.py
+#
+# To run this, you'll need to install the required packages:
+# pip install "fastapi[all]" pydantic pyyaml
 
+import inspect
 import yaml
+from typing import Callable, Any, Optional, Type
+
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import PlainTextResponse
-from pydantic import create_model
-from pydantic.fields import FieldInfo
+from pydantic import BaseModel
+import uvicorn
 
-
-class ToolSet:
+class Toolset:
     """
-    A toolset that automatically converts well-typed functions into FastAPI endpoints.
+    A class to create a tool server from Python functions.
+
+    This class uses FastAPI to expose functions as API endpoints. It provides
+    a decorator to add functions as "tools" and automatically generates
+    OpenAPI schemas for each tool.
     """
 
-    def __init__(self, title: str = "ToolSet API", version: str = "1.0.0"):
-        self.app = FastAPI(title=title, version=version)
-        self.endpoints: Dict[str, Dict[str, Any]] = {}
-        self._setup_schema_routes()
-
-    def _setup_schema_routes(self):
-        """Setup schema routes for all endpoints."""
-
-        @self.app.get("/schema/{endpoint_path:path}")
-        async def get_schema(endpoint_path: str):
-            """Get OpenAPI schema for a specific endpoint."""
-            if endpoint_path not in self.endpoints:
-                raise HTTPException(status_code=404, detail=f"Endpoint /{endpoint_path} not found")
-
-            endpoint_info = self.endpoints[endpoint_path]
-            schema = endpoint_info.get("schema", {})
-
-            return PlainTextResponse(
-                yaml.dump(schema, default_flow_style=False, sort_keys=False),
-                media_type="text/yaml"
-            )
-
-        @self.app.get("/schema")
-        async def get_all_schemas():
-            """Get OpenAPI schema for all endpoints."""
-            schemas = {}
-            for path, info in self.endpoints.items():
-                schemas[path] = info.get("schema", {})
-
-            return PlainTextResponse(
-                yaml.dump(schemas, default_flow_style=False, sort_keys=False),
-                media_type="text/yaml"
-            )
-
-    def _validate_function_signature(self, func: Callable) -> Dict[str, Any]:
+    def __init__(self, title: str = "Toolset API", version: str = "1.0.0"):
         """
-        Validate that a function has proper type hints and can be converted to a FastAPI endpoint.
-        Returns endpoint configuration.
-        """
-        sig = inspect.signature(func)
-        parameters = sig.parameters
+        Initializes the Toolset and the underlying FastAPI application.
 
-        # Check if function has proper type hints
-        if sig.return_annotation == inspect.Signature.empty:
-            raise ValueError(f"Function {func.__name__} must have a return type annotation")
-
-        # Validate parameters
-        request_model = None
-        path_params = []
-        query_params = []
-
-        for name, param in parameters.items():
-            if param.annotation == inspect.Parameter.empty:
-                raise ValueError(f"Parameter {name} in function {func.__name__} must have a type annotation")
-
-            # Skip self parameter for methods
-            if name == "self":
-                continue
-
-            # For now, we'll treat all parameters as request body
-            # In a more sophisticated version, we could detect path/query parameters
-            if request_model is None:
-                request_model = create_model(
-                    f"{func.__name__}Request",
-                    **{name: (param.annotation, ...) if param.default == inspect.Parameter.empty else (param.annotation,
-                                                                                                       param.default)}
-                )
-            else:
-                # Add field to existing model
-                field_info = FieldInfo(...) if param.default == inspect.Parameter.empty else FieldInfo(
-                    default=param.default)
-                request_model.model_fields[name] = field_info
-
-        return {
-            "request_model": request_model,
-            "return_type": sig.return_annotation,
-            "path_params": path_params,
-            "query_params": query_params
-        }
-
-    def _create_endpoint_function(self, func: Callable, config: Dict[str, Any]) -> Callable:
-        """Create a FastAPI endpoint function from the original function."""
-
-        @wraps(func)
-        async def endpoint(request: config["request_model"]):
-            try:
-                # Extract parameters from request model
-                params = request.model_dump()
-
-                # Call the original function
-                result = func(**params)
-
-                # Handle async functions
-                if inspect.iscoroutinefunction(func):
-                    result = await result
-
-                return result
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=str(e))
-
-        return endpoint
-
-    def _generate_openapi_schema(self, func: Callable, config: Dict[str, Any], path: str) -> Dict[str, Any]:
-        """Generate OpenAPI schema for the endpoint."""
-
-        # Create schema for request model
-        request_schema = {}
-        if config["request_model"]:
-            request_schema = config["request_model"].model_json_schema()
-
-        # Create schema for response
-        response_schema = {}
-        if hasattr(config["return_type"], "model_json_schema"):
-            response_schema = config["return_type"].model_json_schema()
-        else:
-            # For primitive types, create a simple schema
-            response_schema = {"type": "string"}  # Default fallback
-
-        return {
-            "openapi": "3.0.0",
-            "info": {
-                "title": "ToolSet API",
-                "version": "1.0.0"
-            },
-            "paths": {
-                f"/{path}": {
-                    "post": {
-                        "summary": func.__name__,
-                        "description": func.__doc__ or f"Endpoint for {func.__name__}",
-                        "requestBody": {
-                            "required": True,
-                            "content": {
-                                "application/json": {
-                                    "schema": request_schema
-                                }
-                            }
-                        },
-                        "responses": {
-                            "200": {
-                                "description": "Successful response",
-                                "content": {
-                                    "application/json": {
-                                        "schema": response_schema
-                                    }
-                                }
-                            },
-                            "422": {
-                                "description": "Validation error"
-                            },
-                            "500": {
-                                "description": "Internal server error"
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-    def add(self, path: Optional[str] = None):
-        """
-        Decorator to add a function as a FastAPI endpoint.
-        
         Args:
-            path: Optional path for the endpoint. If not provided, uses function name.
+            title (str): The title of the API for the OpenAPI documentation.
+            version (str): The version of the API.
         """
+        self.app = FastAPI(
+            title=title,
+            version=version,
+            description="A server for dynamically added tools with auto-generated schemas."
+        )
+        self._tools = {}
 
+    def add(self, name: Optional[str] = None) -> Callable:
+        """
+        A decorator to add a function as a tool to the API.
+
+        The decorated function MUST have exactly one parameter, and that
+        parameter's type hint MUST be a Pydantic BaseModel. The function's
+        return type hint can also be a Pydantic model, which will be used
+        for the response schema.
+
+        Args:
+            name (Optional[str]): The name of the tool. If not provided, the
+                                  function's name will be used.
+
+        Returns:
+            A decorator that registers the function.
+
+        Raises:
+            ValueError: If a tool with the same name already exists.
+            TypeError: If the function signature is not valid (e.g., wrong
+                       number of parameters or incorrect type hints).
+        """
         def decorator(func: Callable) -> Callable:
-            # Determine endpoint path
-            endpoint_path = path or func.__name__
+            tool_name = name or func.__name__
+            if tool_name in self._tools:
+                raise ValueError(f"Tool with name '{tool_name}' already exists.")
 
-            # Validate function signature
-            config = self._validate_function_signature(func)
+            # --- 1. Validate the function signature ---
+            sig = inspect.signature(func)
+            params = list(sig.parameters.values())
 
-            # Create endpoint function
-            endpoint_func = self._create_endpoint_function(func, config)
+            if len(params) != 1:
+                raise TypeError(
+                    f"Tool function '{tool_name}' must have exactly one parameter. "
+                    f"Found {len(params)}."
+                )
 
-            # Add to FastAPI app
-            self.app.post(f"/{endpoint_path}")(endpoint_func)
+            input_param = params[0]
+            input_model: Type[Any] = input_param.annotation
 
-            # Store endpoint information
-            schema = self._generate_openapi_schema(func, config, endpoint_path)
-            self.endpoints[endpoint_path] = {
-                "function": func,
-                "config": config,
-                "schema": schema
-            }
+            if not inspect.isclass(input_model) or not issubclass(input_model, BaseModel):
+                raise TypeError(
+                    f"The parameter for tool '{tool_name}' must be type-hinted with a "
+                    f"Pydantic BaseModel subclass. Found: {input_model}"
+                )
 
+            # --- 2. Add the main tool endpoint (/tool/{tool_name}) ---
+            return_model = sig.return_annotation
+            if return_model is inspect.Signature.empty:
+                return_model = None  # Let FastAPI infer the response model
+
+            @self.app.post(f"/tool/{tool_name}", name=tool_name, response_model=return_model, tags=["Tools"])
+            async def endpoint(data: input_model): # type: ignore
+                """Dynamically created endpoint for the tool."""
+                try:
+                    if inspect.iscoroutinefunction(func):
+                        result = await func(data)
+                    else:
+                        result = func(data)
+                    return result
+                except Exception as e:
+                    # In a real application, you would add more robust logging here.
+                    raise HTTPException(status_code=500, detail=str(e))
+
+            # --- 3. Add the schema endpoint (/schema/{tool_name}) ---
+            @self.app.get(f"/schema/{tool_name}", response_class=PlainTextResponse, tags=["Schemas"])
+            def get_schema() -> str:
+                """Returns a minimal, self-contained OpenAPI spec for the tool in YAML format."""
+                if not self.app.openapi_schema:
+                    # The openapi_schema is cached, this will generate it the first time
+                    self.app.openapi()
+
+                openapi_spec = self.app.openapi_schema
+                if not openapi_spec:
+                    return "Could not generate OpenAPI schema."
+
+                path_key = f"/tool/{tool_name}"
+
+                if path_key not in openapi_spec.get("paths", {}):
+                    return PlainTextResponse(f"Schema for tool '{tool_name}' not found.", status_code=404)
+
+                path_spec = openapi_spec["paths"][path_key]
+
+                # Recursively find all referenced schemas within the path spec
+                referenced_schemas = {}
+                full_schemas = openapi_spec.get("components", {}).get("schemas", {})
+
+                def find_and_add_refs(obj: Any):
+                    if isinstance(obj, dict):
+                        for key, value in obj.items():
+                            if key == "$ref" and isinstance(value, str) and value.startswith("#/components/schemas/"):
+                                schema_name = value.split("/")[-1]
+                                if schema_name in full_schemas and schema_name not in referenced_schemas:
+                                    referenced_schemas[schema_name] = full_schemas[schema_name]
+                                    # Recursively check the added schema for more references
+                                    find_and_add_refs(full_schemas[schema_name])
+                            else:
+                                find_and_add_refs(value)
+                    elif isinstance(obj, list):
+                        for item in obj:
+                            find_and_add_refs(item)
+
+                find_and_add_refs(path_spec)
+
+                # Build the minimal OpenAPI spec for this specific tool
+                tool_openapi_spec = {
+                    "openapi": openapi_spec.get("openapi", "3.1.0"),
+                    "info": {
+                        "title": f"Tool: {tool_name}",
+                        "version": self.app.version,
+                        "description": func.__doc__ or f"Schema for {tool_name}"
+                    },
+                    "paths": {
+                        path_key: path_spec
+                    },
+                    "components": {
+                        "schemas": referenced_schemas
+                    } if referenced_schemas else {}
+                }
+
+                return yaml.dump(tool_openapi_spec, sort_keys=False, indent=2)
+
+            self._tools[tool_name] = func
+            print(f"✅ Tool '{tool_name}' added successfully.")
             return func
-
         return decorator
 
-    def serve(self, host: str = "0.0.0.0", port: int = 8000, **kwargs):
+    def serve(self, host: str = "127.0.0.1", port: int = 8000):
         """
-        Run the FastAPI server.
-        
+        Runs the FastAPI server using uvicorn.
+
         Args:
-            host: Host to bind to
-            port: Port to bind to
-            **kwargs: Additional arguments to pass to uvicorn.run
+            host (str): The host to bind the server to.
+            port (int): The port to run the server on.
         """
-        import uvicorn
+        print("\n--- Starting Toolset Server ---")
+        print(f"➡️  Interactive API docs (Swagger UI): http://{host}:{port}/docs")
+        print(f"➡️  Alternative API docs (ReDoc):    http://{host}:{port}/redoc")
+        uvicorn.run(self.app, host=host, port=port)
 
-        print(f"Starting ToolSet server on http://{host}:{port}")
-        print(f"Available endpoints:")
-        for path in self.endpoints.keys():
-            print(f"  POST /{path}")
-            print(f"  GET  /schema/{path}")
-        print(f"  GET  /schema (all schemas)")
-        print(f"  GET  /docs (Swagger UI)")
 
-        uvicorn.run(self.app, host=host, port=port, **kwargs)
+
+
+# 5. Run the server
+if __name__ == "__main__":
+
+    # --- Example Usage ---
+
+    # 1. Create an instance of the Toolset
+    toolset = Toolset()
+
+    # 2. Define Pydantic models for tool inputs and outputs
+    class CalculatorRequest(BaseModel):
+        a: float
+        b: float
+        operation: str = "add"
+
+    class CalculatorResponse(BaseModel):
+        result: float
+        comment: str
+
+    class GreetRequest(BaseModel):
+        name: str
+        greeting: str = "Hello"
+
+    class GreetResponse(BaseModel):
+        message: str
+
+    # 3. Define functions and decorate them to turn them into tools
+
+    @toolset.add("calculator")
+    def simple_calculator(req: CalculatorRequest) -> CalculatorResponse:
+        """Performs a simple arithmetic operation (add, subtract, multiply, divide)."""
+        if req.operation == "add":
+            res = req.a + req.b
+        elif req.operation == "subtract":
+            res = req.a - req.b
+        elif req.operation == "multiply":
+            res = req.a * req.b
+        elif req.operation == "divide":
+            if req.b == 0:
+                raise ValueError("Cannot divide by zero.")
+            res = req.a / req.b
+        else:
+            raise ValueError(f"Unknown operation: {req.operation}")
+
+        return CalculatorResponse(result=res, comment=f"Successfully performed {req.operation}.")
+
+    @toolset.add()  # Decorator uses the function name 'greet_user' as the tool name
+    async def greet_user(req: GreetRequest) -> GreetResponse:
+        """Greets a user. This is an example of an async tool function."""
+        return GreetResponse(message=f"{req.greeting}, {req.name}!")
+
+    # 4. Demonstrate the error handling for an invalid tool definition
+    print("\n--- Demonstrating Error Handling ---")
+    try:
+        @toolset.add("invalid_tool")
+        def invalid_tool_signature(a: int, b: int):
+            """This function will fail to be added as a tool."""
+            return a + b
+    except TypeError as e:
+        print(f"💥 Caught expected error for invalid signature: {e}")
+
+    try:
+        @toolset.add("another_invalid_tool")
+        def invalid_tool_type(data: dict):
+            """This function will also fail due to incorrect type hint."""
+            return data
+    except TypeError as e:
+        print(f"💥 Caught expected error for invalid type hint: {e}")
+
+    toolset.serve(host="127.0.0.1", port=8000)

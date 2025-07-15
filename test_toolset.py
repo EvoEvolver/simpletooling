@@ -11,15 +11,15 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
-    from simpletooling import ToolSet
+    from simpletooling import Toolset
     from pydantic import BaseModel
     from typing import List, Optional
     
     print("✓ All imports successful")
     
-    # Test 1: Create ToolSet instance
-    toolset = ToolSet(title="Test API", version="1.0.0")
-    print("✓ ToolSet instance created")
+    # Test 1: Create Toolset instance
+    toolset = Toolset(title="Test API", version="1.0.0")
+    print("✓ Toolset instance created")
     
     # Test 2: Simple function
     @toolset.add()

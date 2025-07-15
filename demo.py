@@ -4,10 +4,10 @@ Minimal demo of SimpleTooling package.
 This script shows the basic usage without complex examples.
 """
 
-from simpletooling import ToolSet
+from simpletooling import Toolset
 
-# Create a ToolSet instance
-toolset = ToolSet(title="Demo API", version="1.0.0")
+# Create a Toolset instance
+toolset = Toolset(title="Demo API", version="1.0.0")
 
 # Simple function with basic types
 @toolset.add()
