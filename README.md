@@ -112,9 +112,8 @@ def process_data(data: InputModel) -> OutputModel:
 
 When you run the server, the following endpoints are automatically created:
 
-- `POST /{function_name}` - Your function endpoints
+- `POST /tool/{function_name}` - Your function endpoints
 - `GET /schema/{endpoint_name}` - OpenAPI schema for specific endpoint
-- `GET /schema` - All OpenAPI schemas
 - `GET /docs` - Swagger UI documentation
 - `GET /openapi.json` - Full OpenAPI specification
 
@@ -136,37 +135,4 @@ def bad_function(param):  # Missing type annotation
 # This will also raise an error
 def another_bad_function(param: str):  # Missing return type
     return "result"
-```
-
-## Advanced Usage
-
-### Async Functions
-
-```python
-import asyncio
-
-@toolset.add()
-async def async_function(data: str) -> str:
-    await asyncio.sleep(1)
-    return f"Async result: {data}"
-```
-
-### Optional Parameters
-
-```python
-from typing import Optional
-
-@toolset.add()
-def function_with_optional(param1: str, param2: Optional[int] = None) -> str:
-    return f"Result: {param1}, {param2}"
-```
-
-### List and Dict Types
-
-```python
-from typing import List, Dict
-
-@toolset.add()
-def process_list(items: List[str]) -> Dict[str, int]:
-    return {item: len(item) for item in items}
 ```

@@ -4,13 +4,15 @@
 # pip install "fastapi[all]" pydantic pyyaml
 
 import inspect
-import yaml
-from typing import Callable, Any, Optional, Type, Dict
+import json
+from typing import Callable, Optional, Type, Dict
 
+import uvicorn
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, create_model
-import uvicorn
+
 
 class Toolset:
     """
@@ -33,6 +35,14 @@ class Toolset:
             title=title,
             version=version,
             description="A server for dynamically added tools with auto-generated schemas."
+        )
+        # Enable CORS for all origins
+        self.app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
         )
         self.tools: Dict[str, Callable] = {}
         self.input_models: Dict[str, Type] = {}
@@ -81,8 +91,9 @@ class Toolset:
             if return_model is inspect.Signature.empty:
                 return_model = None  # Let FastAPI infer the response model
             print(f"adding /tool/{tool_name}")
+
             @self.app.post(f"/tool/{tool_name}", name=tool_name, tags=["Tools"])
-            async def endpoint(data: model): # type: ignore
+            async def endpoint(data: model):  # type: ignore
                 """Dynamically created endpoint for the tool."""
                 try:
                     if inspect.iscoroutinefunction(func):
@@ -94,67 +105,30 @@ class Toolset:
                     # In a real application, you would add more robust logging here.
                     raise HTTPException(status_code=500, detail=str(e))
 
-            # --- 3. Add the schema endpoint (/schema/{tool_name}) ---
-            @self.app.get(f"/schema/{tool_name}", response_class=PlainTextResponse, tags=["Schemas"])
-            def get_schema() -> str:
-                """Returns a minimal, self-contained OpenAPI spec for the tool in YAML format."""
-                if not self.app.openapi_schema:
-                    # The openapi_schema is cached, this will generate it the first time
-                    self.app.openapi()
+            # Schema endpoint
+            @self.app.get(f"/schema/{tool_name}", name=f"schema_{tool_name}", tags=["Schemas"])
+            async def schema_endpoint():
+                temp_app = FastAPI()
 
-                openapi_spec = self.app.openapi_schema
-                if not openapi_spec:
-                    return "Could not generate OpenAPI schema."
+                # Closure to bind model & func
+                async def temp_ep(input: model):
+                    return func(**input.model_dump())
 
-                path_key = f"/tool/{tool_name}"
-
-                if path_key not in openapi_spec.get("paths", {}):
-                    return PlainTextResponse(f"Schema for tool '{tool_name}' not found.", status_code=404)
-
-                path_spec = openapi_spec["paths"][path_key]
-
-                # Recursively find all referenced schemas within the path spec
-                referenced_schemas = {}
-                full_schemas = openapi_spec.get("components", {}).get("schemas", {})
-
-                def find_and_add_refs(obj: Any):
-                    if isinstance(obj, dict):
-                        for key, value in obj.items():
-                            if key == "$ref" and isinstance(value, str) and value.startswith("#/components/schemas/"):
-                                schema_name = value.split("/")[-1]
-                                if schema_name in full_schemas and schema_name not in referenced_schemas:
-                                    referenced_schemas[schema_name] = full_schemas[schema_name]
-                                    # Recursively check the added schema for more references
-                                    find_and_add_refs(full_schemas[schema_name])
-                            else:
-                                find_and_add_refs(value)
-                    elif isinstance(obj, list):
-                        for item in obj:
-                            find_and_add_refs(item)
-
-                find_and_add_refs(path_spec)
-
-                # Build the minimal OpenAPI spec for this specific tool
-                tool_openapi_spec = {
-                    "openapi": openapi_spec.get("openapi", "3.1.0"),
-                    "info": {
-                        "title": f"Tool: {tool_name}",
-                        "version": self.app.version,
-                        "description": func.__doc__ or f"Schema for {tool_name}"
-                    },
-                    "paths": {
-                        path_key: path_spec
-                    },
-                    "components": {
-                        "schemas": referenced_schemas
-                    } if referenced_schemas else {}
-                }
-
-                return yaml.dump(tool_openapi_spec, sort_keys=False, indent=2)
+                temp_app.post(f"/tool/{tool_name}")(temp_ep)
+                schema = temp_app.openapi()
+                # Add servers field with the actual host/port
+                host = getattr(self, '_host', '127.0.0.1')
+                port = getattr(self, '_port', 8000)
+                schema['servers'] = [
+                    {"url": f"http://{host}:{port}", "description": "Current server address"}
+                ]
+                json_str = json.dumps(schema, indent=2)
+                return PlainTextResponse(json_str)
 
             self.tools[tool_name] = func
             print(f"✅ Tool '{tool_name}' added successfully.")
             return func
+
         return decorator
 
     def serve(self, host: str = "127.0.0.1", port: int = 8000):
@@ -165,12 +139,12 @@ class Toolset:
             host (str): The host to bind the server to.
             port (int): The port to run the server on.
         """
+        self._host = host  # Store host for schema endpoint
+        self._port = port  # Store port for schema endpoint
         print("\n--- Starting Toolset Server ---")
         print(f"➡️  Interactive API docs (Swagger UI): http://{host}:{port}/docs")
         print(f"➡️  Alternative API docs (ReDoc):    http://{host}:{port}/redoc")
         uvicorn.run(self.app, host=host, port=port)
-
-
 
 
 # 5. Run the server
@@ -181,22 +155,27 @@ if __name__ == "__main__":
     # 1. Create an instance of the Toolset
     toolset = Toolset()
 
+
     # 2. Define Pydantic models for tool inputs and outputs
     class CalculatorRequest(BaseModel):
         a: float
         b: float
         operation: str = "add"
 
+
     class CalculatorResponse(BaseModel):
         result: float
         comment: str
+
 
     class GreetRequest(BaseModel):
         name: str
         greeting: str = "Hello"
 
+
     class GreetResponse(BaseModel):
         message: str
+
 
     # 3. Define functions and decorate them to turn them into tools
 
@@ -218,10 +197,12 @@ if __name__ == "__main__":
 
         return CalculatorResponse(result=res, comment=f"Successfully performed {req.operation}.")
 
+
     @toolset.add()  # Decorator uses the function name 'greet_user' as the tool name
     async def greet_user(req: GreetRequest) -> GreetResponse:
         """Greets a user. This is an example of an async tool function."""
         return GreetResponse(message=f"{req.greeting}, {req.name}!")
+
 
     # 4. Demonstrate the error handling for an invalid tool definition
     print("\n--- Demonstrating Error Handling ---")
