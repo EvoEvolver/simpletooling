@@ -178,6 +178,8 @@ class Toolset:
                 url = os.environ.get('TOOL_URL', None)
                 if url is None:
                     url = os.environ.get('RAILWAY_PUBLIC_DOMAIN', None)
+                    if url is not None:
+                        url = f"https://{url}"
                 if url is None:
                     host = getattr(self, '_host', '127.0.0.1')
                     port = getattr(self, '_port', 8000)
