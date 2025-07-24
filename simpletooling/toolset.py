@@ -90,13 +90,14 @@ class Toolset:
             TypeError: If the function signature is not valid (e.g., wrong
                        number of parameters or incorrect type hints).
         """
-        tool_name = _tool_name or func.__name__
-        if tool_name in self.tools:
-            raise ValueError(f"Tool '{tool_name}' already exists. Please use a different name.")
-        if tool_name in ["openapi", "docs", "redoc", "schema"]:
-            raise ValueError(f"Tool name '{tool_name}' is reserved. Please choose a different name.")
+
 
         def decorator(func: Callable) -> Callable:
+            tool_name = _tool_name or func.__name__
+            if tool_name in self.tools:
+                raise ValueError(f"Tool '{tool_name}' already exists. Please use a different name.")
+            if tool_name in ["openapi", "docs", "redoc", "schema"]:
+                raise ValueError(f"Tool name '{tool_name}' is reserved. Please choose a different name.")
             sig = inspect.signature(func)
             param_desc, return_desc, description = parse_rst_docstring(func.__doc__)
             fields = {}
