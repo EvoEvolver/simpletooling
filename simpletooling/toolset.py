@@ -11,7 +11,7 @@ from typing import Callable, Optional, Type, Dict
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, RedirectResponse
 from pydantic import Field
 from pydantic import create_model
 
@@ -52,6 +52,10 @@ class Toolset:
         # Map from tool name to a dict of parameter names and their example values
         self.example_map: Dict[str, Dict[str, str]] = {}
 
+        @self.app.get("/", include_in_schema=False)
+        async def root():
+            return RedirectResponse(url="/docs")
+
     def examples(self, **kwargs):
         """
         A decorator to add example values for parameters in the OpenAPI schema.
@@ -86,9 +90,13 @@ class Toolset:
             TypeError: If the function signature is not valid (e.g., wrong
                        number of parameters or incorrect type hints).
         """
+        tool_name = _tool_name or func.__name__
+        if tool_name in self.tools:
+            raise ValueError(f"Tool '{tool_name}' already exists. Please use a different name.")
+        if tool_name in ["openapi", "docs", "redoc", "schema"]:
+            raise ValueError(f"Tool name '{tool_name}' is reserved. Please choose a different name.")
 
         def decorator(func: Callable) -> Callable:
-            tool_name = _tool_name or func.__name__
             sig = inspect.signature(func)
             param_desc, return_desc, description = parse_rst_docstring(func.__doc__)
             fields = {}
