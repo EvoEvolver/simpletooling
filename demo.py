@@ -12,38 +12,35 @@ toolset = Toolset(title="Demo API", version="1.0.0")
 # Simple function with basic types
 @toolset.add()
 def hello(name: str) -> str:
-    """Say hello to someone."""
+    """
+    A simple function that greets the user.
+    :param name: the name of the user. example: "World"
+    :return: the greeting message. example: "Hello, World!"
+    """
     return f"Hello, {name}!"
 
 # Function with multiple parameters
 @toolset.add()
 def add(a: int, b: int) -> int:
-    """Add two numbers."""
+    """
+    Add two integers together.
+    :param a: the first integer
+    :param b: the second integer
+    :return: the sum of a and b
+    """
     return a + b
 
 # Function with custom path
 @toolset.add("multiply")
 def multiply_numbers(x: float, y: float) -> float:
-    """Multiply two numbers."""
+    """
+    Multiply two floating-point numbers.
+    :param x: the first number
+    :param y: the second number
+    :return: the product of x and y
+    """
     return x * y
 
 if __name__ == "__main__":
-    print("🚀 Starting SimpleTooling demo server...")
-    print("Available endpoints:")
-    print("  POST /hello")
-    print("  POST /add") 
-    print("  POST /multiply")
-    print("  GET  /schema/hello")
-    print("  GET  /schema/add")
-    print("  GET  /schema/multiply")
-    print("  GET  /schema (all schemas)")
-    print("  GET  /docs (Swagger UI)")
-    print()
-    print("Try these curl commands:")
-    print('  curl -X POST "http://localhost:8000/tool/hello" -H "Content-Type: application/json" -d \'{"name": "World"}\'')
-    print('  curl -X POST "http://localhost:8000/tool/add" -H "Content-Type: application/json" -d \'{"a": 5, "b": 3}\'')
-    print('  curl -X POST "http://localhost:8000/tool/multiply" -H "Content-Type: application/json" -d \'{"x": 4.5, "y": 2.0}\'')
-    print()
-    
     # Start the server
-    toolset.serve(host="0.0.0.0", port=8000) 
+    toolset.serve(host="0.0.0.0", port=8000)
