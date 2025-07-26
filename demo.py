@@ -43,4 +43,4 @@ def multiply_numbers(x: float, y: float) -> float:
 
 if __name__ == "__main__":
     # Start the server
-    toolset.serve(host="0.0.0.0", port=8000)
+    toolset.serve(host="0.0.0.0", port=8000, interpreter=True)

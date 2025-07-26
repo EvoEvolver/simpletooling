@@ -14,6 +14,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from pydantic import Field
 from pydantic import create_model
+from pydantic import BaseModel
+from simpletooling.interpret import interpret_python_code
 
 
 class Toolset:
@@ -56,6 +58,8 @@ class Toolset:
         async def root():
             return RedirectResponse(url="/docs")
 
+
+
     def examples(self, **kwargs):
         """
         A decorator to add example values for parameters in the OpenAPI schema.
@@ -79,7 +83,7 @@ class Toolset:
         """
         A decorator to add a function as a tool to the API.
         Args:
-            name (Optional[str]): The name of the tool. If not provided, the
+            _tool_name (Optional[str]): The name of the tool. If not provided, the
                                   function's name will be used.
 
         Returns:
@@ -205,7 +209,7 @@ class Toolset:
 
         return decorator
 
-    def serve(self, host: str = "127.0.0.1", port: int = 8000):
+    def serve(self, host: str = "127.0.0.1", port: int = 8000, interpreter: bool = False):
         """
         Runs the FastAPI server using uvicorn.
 
@@ -213,6 +217,13 @@ class Toolset:
             host (str): The host to bind the server to.
             port (int): The port to run the server on.
         """
+        if interpreter:
+            class CodeRequest(BaseModel):
+                code: str = Field(..., description="Python code to execute")
+            @self.app.post("/interpreter", name="interpreter", tags=["Interpreter"])
+            async def python_interpreter(request: CodeRequest):
+                result = interpret_python_code(request.code)
+                return {"result": result}
         self._host = host  # Store host for schema endpoint
         self._port = port  # Store port for schema endpoint
         print("\n--- Starting Toolset Server ---")
