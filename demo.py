@@ -3,6 +3,7 @@
 Minimal demo of SimpleTooling package.
 This script shows the basic usage without complex examples.
 """
+import os
 
 from simpletooling import Toolset
 
@@ -41,6 +42,23 @@ def multiply_numbers(x: float, y: float) -> float:
     """
     return x * y
 
+
+os.environ["MINIO_URL"] = "https://storage.treer.ai"
+@toolset.add()
+def upload_txt_file(file_content: str) -> str:
+    """
+    Simulate file upload.
+    :param file_content: the file content as bytes
+    :return: the url of the uploaded file
+    """
+    from simpletooling.file_sdk import upload_string
+    url = upload_string(
+        file_content,
+        suggested_filename="demo.txt",
+    )
+    return f"File uploaded to: {url}"
+
+
 if __name__ == "__main__":
     # Start the server
-    toolset.serve(host="0.0.0.0", port=8000, interpreter=True)
+    toolset.serve(host="0.0.0.0", port=8001, interpreter=True)
