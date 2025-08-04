@@ -11,13 +11,15 @@ license = {text = "MIT"}
 authors = [
     {name = "Zijian Zhang", email = "doomspec@outlook.com"}
 ]
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.100.0",
     "uvicorn[standard]>=0.20.0",
     "pydantic>=2.0.0",
     "pyyaml>=6.0",
     "minio>=7.2.7",
+    "mcp>=1.0.0",
+    "httpx>=0.25.0",
 ]
 
 [project.optional-dependencies]
