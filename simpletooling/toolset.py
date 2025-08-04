@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from simpletooling.interpret import interpret_python_code
 
 from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 import httpx
 
 
@@ -30,6 +31,7 @@ class MCPConnection:
         self.config_hash = config_hash
         self.session: Optional[ClientSession] = None
         self.session_id: Optional[str] = None  # For HTTP MCP sessions
+        self.stdio_context = None  # For stdio MCP sessions
         self.tools: Dict[str, Any] = {}
         self.last_access = datetime.now()
         self.is_connected = False
@@ -58,16 +60,39 @@ class MCPConnection:
                 print(f"[MCPConnection] HTTP client created successfully")
                 
             elif server_config.get("type") == "stdio":
-                print(f"[MCPConnection] Creating stdio client...")
-                # For stdio servers
-                server_params = StdioServerParameters(
-                    command=server_config["command"],
-                    args=server_config.get("args", [])
-                )
-                self.session = ClientSession(server_params)
-                print(f"[MCPConnection] Initializing stdio session...")
-                await self.session.initialize()
-                print(f"[MCPConnection] Stdio client initialized successfully")
+                print(f"[MCPConnection] Creating custom stdio MCP client...")
+                
+                # Parse the package URL to extract command and args
+                package_url = server_config["url"]
+                envs = server_config.get("envs", {})
+                
+                print(f"[MCPConnection] Package URL: {package_url}")
+                print(f"[MCPConnection] Environment vars: {list(envs.keys())}")
+                
+                # Determine command and args based on package URL format
+                if package_url.startswith("@") or package_url.startswith("npm:"):
+                    # NPM package format: @scope/package@version or npm:package@version
+                    command = "npx"
+                    args = ["-y", package_url]
+                elif package_url.startswith("uv:"):
+                    # Python uv package format: uv:package@version  
+                    command = "uvx"
+                    args = [package_url[3:]]  # Remove "uv:" prefix
+                elif package_url.startswith("pip:"):
+                    # Python pip package format: pip:package@version
+                    command = "python"
+                    args = ["-m", "pip", "install", package_url[4:], "&&", "python", "-m", package_url[4:].split("@")[0]]
+                else:
+                    # Assume it's a direct command
+                    parts = package_url.split()
+                    command = parts[0]
+                    args = parts[1:] if len(parts) > 1 else []
+                
+                print(f"[MCPConnection] Resolved command: {command}")
+                print(f"[MCPConnection] Resolved args: {args}")
+                
+                # Use our custom stdio MCP client (similar to your JS implementation)
+                await self._connect_custom_stdio(command, args, envs)
             
             print(f"[MCPConnection] Fetching tools from server...")
             tool_fetch_success = await self._fetch_tools()
@@ -87,6 +112,152 @@ class MCPConnection:
             print(f"[MCPConnection] Error type: {type(e)}")
             # Don't raise HTTPException here, let the caller handle it
             raise e
+    
+    async def _connect_custom_stdio(self, command: str, args: list, envs: dict):
+        """Custom stdio MCP client implementation to bypass official library issues."""
+        import asyncio
+        import json
+        import os
+        
+        print(f"[MCPConnection._connect_custom_stdio] Starting custom stdio MCP client")
+        print(f"[MCPConnection._connect_custom_stdio] Command: {command} {' '.join(args)}")
+        print(f"[MCPConnection._connect_custom_stdio] Environment vars: {list(envs.keys())}")
+        
+        try:
+            # Prepare environment
+            env = {**os.environ, **envs}
+            
+            # Start the MCP server process
+            process = await asyncio.create_subprocess_exec(
+                command, *args,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env
+            )
+            
+            print(f"[MCPConnection._connect_custom_stdio] Process started with PID: {process.pid}")
+            
+            # Store process for later cleanup
+            self.stdio_process = process
+            self.session = process  # Use process as our "session"
+            
+            # Test communication with initialize message
+            init_message = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {"tools": {}},
+                    "clientInfo": {"name": "simpletooling", "version": "0.1.1"}
+                }
+            }
+            
+            print(f"[MCPConnection._connect_custom_stdio] Sending initialize message...")
+            message_data = json.dumps(init_message) + "\n"
+            process.stdin.write(message_data.encode())
+            await process.stdin.drain()
+            
+            # Read response with timeout
+            try:
+                response_line = await asyncio.wait_for(
+                    process.stdout.readline(), 
+                    timeout=10.0
+                )
+                
+                if response_line:
+                    response_text = response_line.decode().strip()
+                    print(f"[MCPConnection._connect_custom_stdio] Initialize response: {response_text}")
+                    
+                    try:
+                        response_data = json.loads(response_text)
+                        if "error" in response_data:
+                            raise Exception(f"Initialize error: {response_data['error']}")
+                        print(f"[MCPConnection._connect_custom_stdio] Initialize successful")
+                    except json.JSONDecodeError as e:
+                        print(f"[MCPConnection._connect_custom_stdio] Invalid JSON response: {response_text}")
+                        raise Exception(f"Invalid JSON response from MCP server: {e}")
+                else:
+                    raise Exception("No response from MCP server")
+                    
+            except asyncio.TimeoutError:
+                print(f"[MCPConnection._connect_custom_stdio] Initialize timed out")
+                await self._cleanup_stdio_process()
+                raise Exception("Initialize timeout - MCP server not responding")
+                
+        except Exception as e:
+            print(f"[MCPConnection._connect_custom_stdio] Custom stdio connection failed: {e}")
+            await self._cleanup_stdio_process()
+            raise e
+    
+    async def _cleanup_stdio_process(self):
+        """Clean up the stdio process."""
+        if hasattr(self, 'stdio_process') and self.stdio_process:
+            try:
+                if self.stdio_process.returncode is None:  # Process still running
+                    # Close stdin to signal end of communication
+                    if self.stdio_process.stdin:
+                        try:
+                            self.stdio_process.stdin.close()
+                        except Exception:
+                            pass
+                    
+                    # Wait for process to exit gracefully
+                    try:
+                        await asyncio.wait_for(self.stdio_process.wait(), timeout=3.0)
+                    except asyncio.TimeoutError:
+                        # Force terminate if it doesn't exit gracefully
+                        self.stdio_process.terminate()
+                        try:
+                            await asyncio.wait_for(self.stdio_process.wait(), timeout=2.0)
+                        except asyncio.TimeoutError:
+                            self.stdio_process.kill()
+                            await self.stdio_process.wait()
+            except Exception as e:
+                print(f"[MCPConnection._cleanup_stdio_process] Error during cleanup: {e}")
+            finally:
+                self.stdio_process = None
+    
+    async def _send_stdio_message(self, method: str, params: dict = None) -> dict:
+        """Send a JSON-RPC message to stdio MCP server."""
+        if not hasattr(self, 'stdio_process') or not self.stdio_process:
+            raise Exception("No stdio process available")
+        
+        request_id = str(int(datetime.now().timestamp() * 1000))
+        message = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": method,
+            "params": params or {}
+        }
+        
+        print(f"[MCPConnection._send_stdio_message] Sending: {method}")
+        message_data = json.dumps(message) + "\n"
+        
+        try:
+            self.stdio_process.stdin.write(message_data.encode())
+            await self.stdio_process.stdin.drain()
+            
+            # Read response with timeout
+            response_line = await asyncio.wait_for(
+                self.stdio_process.stdout.readline(),
+                timeout=15.0
+            )
+            
+            if response_line:
+                response_text = response_line.decode().strip()
+                print(f"[MCPConnection._send_stdio_message] Response: {response_text[:200]}...")
+                return json.loads(response_text)
+            else:
+                raise Exception("No response from MCP server")
+                
+        except asyncio.TimeoutError:
+            raise Exception(f"Timeout waiting for {method} response")
+        except json.JSONDecodeError as e:
+            raise Exception(f"Invalid JSON response: {e}")
+        except Exception as e:
+            raise Exception(f"Communication error: {e}")
     
     async def _send_jsonrpc_request(self, method: str, params: dict = None) -> dict:
         """Send a JSON-RPC request to the MCP server."""
@@ -201,15 +372,33 @@ class MCPConnection:
                 return True
                 
             else:
-                print(f"[MCPConnection._fetch_tools] Using stdio client to fetch tools")
-                # Stdio MCP protocol (using the official MCP client library)
+                print(f"[MCPConnection._fetch_tools] Using custom stdio client to fetch tools")
+                # Custom stdio MCP protocol
                 try:
-                    tools_response = await self.session.list_tools()
-                    self.tools = {tool.name: tool.model_dump() for tool in tools_response.tools}
-                    print(f"[MCPConnection._fetch_tools] Successfully fetched {len(self.tools)} tools via stdio")
+                    # Send initialized notification first
+                    await self._send_stdio_message("notifications/initialized", {})
+                    
+                    # List tools
+                    tools_response = await self._send_stdio_message("tools/list", {})
+                    
+                    if "error" in tools_response:
+                        print(f"[MCPConnection._fetch_tools] Tools list error: {tools_response['error']}")
+                        return False
+                    
+                    # Parse tools from response
+                    result = tools_response.get("result", {})
+                    tools = result.get("tools", [])
+                    
+                    print(f"[MCPConnection._fetch_tools] Received {len(tools)} tools via custom stdio")
+                    self.tools = {tool["name"]: tool for tool in tools}
+                    
+                    for tool_name, tool_data in self.tools.items():
+                        print(f"[MCPConnection._fetch_tools] Tool: {tool_name} - {tool_data.get('description', 'No description')}")
+                    
                     return True
+                    
                 except Exception as e:
-                    print(f"[MCPConnection._fetch_tools] Stdio error: {e}")
+                    print(f"[MCPConnection._fetch_tools] Custom stdio error: {e}")
                     self.tools = {}
                     return False
                 
@@ -252,9 +441,24 @@ class MCPConnection:
                 return result
                 
             else:
-                # Stdio MCP protocol
-                result = await self.session.call_tool(tool_name, arguments)
-                return result.content
+                # Custom stdio MCP protocol
+                print(f"[MCPConnection.call_tool] Calling tool {tool_name} with args: {arguments}")
+                
+                response = await self._send_stdio_message("tools/call", {
+                    "name": tool_name,
+                    "arguments": arguments
+                })
+                
+                if "error" in response:
+                    error_info = response["error"]
+                    raise HTTPException(
+                        status_code=500, 
+                        detail=f"MCP tool error: {error_info.get('message', 'Unknown error')}"
+                    )
+                
+                result = response.get("result", {})
+                print(f"[MCPConnection.call_tool] Tool result: {result}")
+                return result
                 
         except HTTPException:
             raise  # Re-raise HTTP exceptions as-is
@@ -267,7 +471,8 @@ class MCPConnection:
             if isinstance(self.session, httpx.AsyncClient):
                 await self.session.aclose()
             else:
-                await self.session.close()
+                # For custom stdio connections, clean up the process
+                await self._cleanup_stdio_process()
             self.session = None
             self.is_connected = False
     
