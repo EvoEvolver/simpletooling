@@ -531,6 +531,16 @@ class Toolset:
         async def add_mcp(config: Dict[str, Any]):
             return await self._add_mcp_server(config)
 
+        # Health check endpoint
+        @self.app.post("/health", tags=["MCP"])
+        async def mcp_health(request: Dict[str, str]):
+            return await self._health_check(request.get("config_hash"))
+
+        # Close/cleanup endpoint
+        @self.app.post("/close", tags=["MCP"])
+        async def mcp_close(request: Dict[str, str]):
+            return await self._close_connection(request.get("config_hash"))
+
     def _compute_config_hash(self, config: Dict[str, Any]) -> str:
         """Compute a hash for the MCP configuration to identify identical configs."""
         config_json = json.dumps(config, sort_keys=True)
@@ -728,6 +738,79 @@ class Toolset:
                 del self.mcp_config_hashes[config_hash]
             
             print(f"Cleaned up idle MCP connection: {config_hash}")
+
+    async def _health_check(self, config_hash: str) -> Dict[str, Any]:
+        """Check if MCP connection is still active and healthy."""
+        if not config_hash:
+            raise HTTPException(status_code=400, detail="config_hash is required")
+        
+        print(f"[Toolset._health_check] Checking health for config_hash: {config_hash}")
+        
+        # Check if connection exists
+        mcp_conn = self.mcp_connections.get(config_hash)
+        if not mcp_conn:
+            return {
+                "config_hash": config_hash,
+                "healthy": False,
+                "status": "not_found",
+                "message": "MCP connection not found"
+            }
+        
+        # Check if connection is still active
+        is_healthy = mcp_conn.is_connected and not mcp_conn.is_idle()
+        
+        # Determine connection type
+        if isinstance(mcp_conn.session, httpx.AsyncClient):
+            connection_type = "http"
+        elif hasattr(mcp_conn, 'stdio_process') and mcp_conn.stdio_process:
+            connection_type = "stdio"
+        else:
+            connection_type = "unknown"
+        
+        print(f"[Toolset._health_check] Health check result for {config_hash}: {'HEALTHY' if is_healthy else 'UNHEALTHY'}")
+        
+        return {
+            "config_hash": config_hash,
+            "healthy": is_healthy,
+            "status": "active" if is_healthy else "idle",
+            "tools_count": len(mcp_conn.tools),
+            "last_access": mcp_conn.last_access.isoformat(),
+            "connection_type": connection_type
+        }
+
+    async def _close_connection(self, config_hash: str) -> Dict[str, Any]:
+        """Immediately cleanup and close MCP connection."""
+        if not config_hash:
+            raise HTTPException(status_code=400, detail="config_hash is required")
+        
+        print(f"[Toolset._close_connection] Closing MCP connection for config_hash: {config_hash}")
+        
+        # Check if connection exists
+        mcp_conn = self.mcp_connections.get(config_hash)
+        if not mcp_conn:
+            return {
+                "config_hash": config_hash,
+                "closed": False,
+                "status": "not_found",
+                "message": "MCP connection not found"
+            }
+        
+        try:
+            # Force cleanup
+            await self._cleanup_mcp_connection(config_hash)
+            
+            print(f"[Toolset._close_connection] Successfully closed connection for {config_hash}")
+            
+            return {
+                "config_hash": config_hash,
+                "closed": True,
+                "status": "success",
+                "message": "MCP connection closed and cleaned up"
+            }
+            
+        except Exception as e:
+            print(f"[Toolset._close_connection] Error closing connection {config_hash}: {e}")
+            raise HTTPException(status_code=500, detail=f"Close operation failed: {str(e)}")
 
     def examples(self, **kwargs):
         """
