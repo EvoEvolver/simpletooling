@@ -1,10 +1,9 @@
 import os
-import random
-import string
 import tempfile
 from datetime import datetime
-from typing import Any, Optional, Union, BinaryIO, TextIO
 from io import StringIO, BytesIO
+from typing import Any, Optional, Union, BinaryIO, TextIO
+
 from minio import Minio
 from minio.error import S3Error
 
@@ -45,7 +44,7 @@ def upload_matplotlib_figure(fig: Any, suggested_filename: str, img_format: str 
     name_parts = os.path.splitext(suggested_filename)
     if not name_parts[1] or name_parts[1][1:].lower() != img_format.lower():
         suggested_filename = f"{name_parts[0]}.{img_format}"
-    
+
     # Save figure to temporary file
     with tempfile.NamedTemporaryFile(suffix=f'.{img_format}', delete=False) as temp_file:
         try:
@@ -77,7 +76,8 @@ def upload_string(content: str, suggested_filename: str, encoding: str = 'utf-8'
             os.unlink(temp_file.name)
 
 
-def upload_file_object(file_obj: Union[BinaryIO, TextIO, StringIO, BytesIO], suggested_filename: str, content_type: Optional[str] = None) -> str:
+def upload_file_object(file_obj: Union[BinaryIO, TextIO, StringIO, BytesIO], suggested_filename: str,
+                       content_type: Optional[str] = None) -> str:
     """
     Upload an opened file object to MinIO/S3.
     
@@ -91,7 +91,8 @@ def upload_file_object(file_obj: Union[BinaryIO, TextIO, StringIO, BytesIO], sug
     """
     # Get MinIO client configuration
     endpoint_url = os.getenv('MINIO_URL', 'http://localhost:9000')
-    assert endpoint_url.startswith('http://') or endpoint_url.startswith('https://'), "MINIO_URL must start with http:// or https://"
+    assert endpoint_url.startswith('http://') or endpoint_url.startswith(
+        'https://'), "MINIO_URL must start with http:// or https://"
     access_key = os.getenv('MINIO_ACCESS_KEY')
     secret_key = os.getenv('MINIO_SECRET_KEY')
     secure = endpoint_url.startswith('https://')
@@ -101,7 +102,7 @@ def upload_file_object(file_obj: Union[BinaryIO, TextIO, StringIO, BytesIO], sug
         endpoint, bucket_name = endpoint.split('/', 1)
     else:
         bucket_name = 'agent-files'
-    
+
     # Create MinIO client
     if access_key and secret_key:
         client = Minio(
@@ -112,9 +113,9 @@ def upload_file_object(file_obj: Union[BinaryIO, TextIO, StringIO, BytesIO], sug
         )
     else:
         client = Minio(endpoint, secure=secure)
-    
+
     filename = suggested_filename
-    
+
     # Check if filename exists and generate alternative if needed
     try:
         client.stat_object(bucket_name, filename)
@@ -125,7 +126,7 @@ def upload_file_object(file_obj: Union[BinaryIO, TextIO, StringIO, BytesIO], sug
     except S3Error as e:
         if e.code != 'NoSuchKey':
             raise e
-    
+
     # Handle different file object types
     if isinstance(file_obj, StringIO):
         # Convert StringIO to BytesIO
@@ -136,7 +137,7 @@ def upload_file_object(file_obj: Union[BinaryIO, TextIO, StringIO, BytesIO], sug
         # File-like object, seek to beginning
         if hasattr(file_obj, 'seek'):
             file_obj.seek(0)
-    
+
     # Get file size
     if hasattr(file_obj, 'seek') and hasattr(file_obj, 'tell'):
         current_pos = file_obj.tell()
@@ -145,13 +146,13 @@ def upload_file_object(file_obj: Union[BinaryIO, TextIO, StringIO, BytesIO], sug
         file_obj.seek(current_pos)  # Restore position
     else:
         file_size = -1
-    
+
     # Upload the file object
     try:
         client.put_object(
-            bucket_name, 
-            filename, 
-            file_obj, 
+            bucket_name,
+            filename,
+            file_obj,
             length=file_size,
             content_type=content_type
         )

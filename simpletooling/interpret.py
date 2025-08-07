@@ -1,15 +1,13 @@
 
-
-
-
 import subprocess
 import sys
 import tempfile
 import os
 import json
+from typing import Dict
 
 
-def interpret_python_code(code: str) -> str:
+def interpret_python_code(code: str, parameters: Dict[str, any]) -> str:
     """
     Interprets a given Python code snippet and returns the result. The result will be the output of the code execution.
     The result Include all the html displayed by IPython
@@ -90,8 +88,11 @@ print("__RESULT_END__")
         temp_file.flush()
         
         try:
+            # Convert parameters to JSON string for sys.argv[1]
+            params_json = json.dumps(parameters) if parameters else "{}"
+            
             result = subprocess.run(
-                [sys.executable, temp_file.name],
+                [sys.executable, temp_file.name, params_json],
                 capture_output=True,
                 text=True,
                 timeout=30
@@ -117,7 +118,7 @@ print("__RESULT_END__")
                     final_output = []
                     
                     if result_data['stdout']:
-                        final_output.append(f"STDOUT:\n{result_data['stdout']}")
+                        final_output.append(result_data['stdout'])
                     
                     if result_data['stderr']:
                         final_output.append(f"STDERR:\n{result_data['stderr']}")
