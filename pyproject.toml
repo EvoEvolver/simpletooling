@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "simpletooling"
-version = "0.1.1"
+version = "0.1.2"
 description = "A Python package that automatically converts well-typed functions into FastAPI endpoints"
 readme = "README.md"
 license = {text = "MIT"}
